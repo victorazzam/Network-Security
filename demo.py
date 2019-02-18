@@ -6,54 +6,37 @@ Written for Year 3 NetSec assignment.
 Author: Victor Azzam
 """
 
-import sys, readline
+import readline
 from subprocess import Popen
 
-# Commands to enable tests
-tests = {
-    # Basic allow/deny
-    "ftp_basic" : ["iptables -A INPUT -p tcp -j DROP --dport 21"],
-    "ssh_basic" : ["iptables -A INPUT -p tcp -j DROP --dport 22"],
-    "http" : ["iptables -A INPUT -p tcp -j DROP --dport 80"],
+# Constants
+FACEBOOK = "31.13.96.0/19,31.13.64.0/18,31.13.24.0/21,185.60.219.0/24,185.60.218.0/24,185.60.217.0/24,185.60.216.0/22"
 
-    # Custom chains
-    "chain_add" : [
-		"echo 123 > /dev/null",
-		"echo 456 > /dev/null"
-	],
+# Commands to enable tests
+tests1 = {
+    "ssh_basic" : ["iptables -A INPUT -p tcp --dport 22 -j DROP"],
+    "source_ip" : ["iptables -A INPUT -p tcp -s 172.20.10.4 -j DROP"],
+    "dest_range" : [f"iptables -A OUTPUT -p tcp -d {FACEBOOK} -j DROP"]
 }
 
 # Commands to disable tests
-destroy = {
-    # Basic allow/deny
-    "ftp_basic" : ["iptables -D INPUT -p tcp -j DROP --dport 21"],
-    "ssh_basic" : ["iptables -D INPUT -p tcp -j DROP --dport 22"],
-    "http" : ["iptables -D INPUT -p tcp -j DROP --dport 80"],
-
-    # Custom chains
-	"chain_add" : [
-		"echo 123 > /dev/null"
-	]
+destroy1 = {
+    "ssh_basic" : ["iptables -D INPUT 1"],
+    "source_ip" : ["iptables -D INPUT 1"],
+	"dest_range" : ["iptables -D OUTPUT 1" for x in " "*7]
 }
 
 tests2 = {
-	"name" : ["cmd"],
-	"" : [
-		"cmd",
-		"cmd"
-	]
+	"ssh_basic" : ["nft add rule inet filter input tcp dport 22 drop"],
+	"source_ip" : ["nft add rule inet filter input tcp saddr 172.20.10.4 drop"],
+	"dest_range" : [f"nft add rule inet filter output tcp saddr {{ {FACEBOOK} }} drop"]
 }
 
 destroy2 = {
-	"name" : ["cmd"],
-	"" : [
-		"cmd",
-		"cmd"
-	]
+	"ssh_basic" : ["nft delete rule inet filter input handle 0"],
+	"source_ip" : ["nft delete rule inet filter input handle 0"],
+	"dest_range" : [f"nft delete rule inet filter output tcp saddr {{ {FACEBOOK} }} drop"]
 }
-
-if [sys.argv[1:] + [''])[0] == "nft":
-	tests = tests2, destroy2
 
 # Tab completion functionality
 def complete(text, state):
@@ -61,16 +44,25 @@ def complete(text, state):
 		if cmd.startswith(text):
 			if not state:
 				return cmd
-			else:
-				state -= 1
+			state -= 1
 
 # Set tab completion function
 readline.parse_and_bind("tab: complete")
 readline.set_completer(complete)
 
-# Track enabled tests
+# Configure tests
 enabled = set()
-green = "\033[92m"
+green = "\033[92;1m"
+tests, destroy = tests1, destroy1
+
+# Disable any active tests
+def disable():
+	for test in enabled:
+		for cmd in destroy[test]:
+			Popen(cmd.split(), stdout=open("/dev/null", "w"))
+
+def switch():
+	return ((tests1, destroy1), (tests2, destroy2))[(tests, destroy) == (tests1, destroy1)]
 
 while 1:
 	try:
@@ -83,7 +75,10 @@ while 1:
 
 		# Read user input to toggle tests
 		ui = input("\nTest: ").strip()
-		if ui in tests:
+		if ui[0] == ".":
+			disable()
+			tests, destroy = switch()
+		elif ui in tests:
 			if ui in enabled:
 				enabled.remove(ui)
 				action = destroy
@@ -95,8 +90,5 @@ while 1:
 
 	# Catch SIGINT (Ctrl-C) or EOF (Ctrl-D)
 	except (KeyboardInterrupt, EOFError):
-		# Disable any active tests and exit
-		for test in enabled:
-			for cmd in destroy[test]:
-				Popen(cmd.split(), stdout=open("/dev/null", "w"))
+		disable() # Clean up before exiting
 		exit("")
